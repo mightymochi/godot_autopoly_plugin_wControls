@@ -3,33 +3,96 @@ extends EditorPlugin
 
 var selected_polygon2d : Polygon2D = null
 var previous_points : PackedVector2Array
-
 var _polygon_2d_editor_panels : Array[Panel] = []
-
+var _toolbar_button : Button
+var _dock_control : CheckButton
+var _dock_container : VBoxContainer
+var _dock_button : Button 
 
 func _enter_tree() -> void:
-	_polygon_2d_editor_panels = _get_polygon_2d_editor_panels()	
+	_polygon_2d_editor_panels = _get_polygon_2d_editor_panels()
+	_toolbar_button = Button.new()
+	_toolbar_button.hide()
+	_toolbar_button.pressed.connect(_on_button_pressed)
+	add_control_to_container(CONTAINER_CANVAS_EDITOR_MENU, _toolbar_button)
+	_dock_container = VBoxContainer.new()
+	_dock_container.name = "Auto-Triangulate" 
+	_dock_control = CheckButton.new()
+	_dock_control.text = "Enable Auto-Triangulation"
+	_dock_container.add_child(_dock_control)
+	_dock_button = Button.new()
+	_dock_button.text = "Auto Tri Polygon"
+	_dock_button.pressed.connect(_on_button_pressed)
+	_dock_container.add_child(_dock_button)
+	add_control_to_dock(DOCK_SLOT_RIGHT_BL, _dock_container)
 
+func _exit_tree() -> void:
+	remove_control_from_container(CONTAINER_CANVAS_EDITOR_MENU, _toolbar_button)
+	_toolbar_button.queue_free()
+	remove_control_from_docks(_dock_container)
+	_dock_container.queue_free()
+
+func _on_button_pressed() -> void:
+	if not selected_polygon2d: return
+	
+	# Toggle logic: If true -> false, If false/missing -> true
+	var current_state = selected_polygon2d.get_meta("auto_triangulate", false)
+	var next_state = not current_state
+	
+	# Undo/Redo Management
+	var ur = get_undo_redo()
+	ur.create_action("Toggle Auto Triangulate")
+	ur.add_do_method(selected_polygon2d, "set_meta", "auto_triangulate", next_state)
+	ur.add_undo_method(selected_polygon2d, "set_meta", "auto_triangulate", current_state)
+	# Refresh UI after undo/redo
+	ur.add_do_method(self, "_update_button_ui")
+	ur.add_undo_method(self, "_update_button_ui")
+	ur.commit_action()
+
+func _update_button_ui() -> void:
+	# Reference both buttons in an array to update them at once
+	var buttons = [_toolbar_button, _dock_button]
+	
+	if not selected_polygon2d:
+		for b in buttons:
+			b.disabled = true # Disable dock button if nothing selected
+			b.hide()
+		_toolbar_button.hide()
+		return
+	
+	for b in buttons:
+		b.show()
+		b.disabled = false
+		if not selected_polygon2d.has_meta("auto_triangulate"):
+			b.text = "AutoT"
+			b.modulate = Color.WHITE
+		elif selected_polygon2d.get_meta("auto_triangulate"):
+			b.text = "AutoT: TRUE"
+			b.modulate = Color.GREEN
+		else:
+			b.text = "AutoT: FALSE"
+			b.modulate = Color.CORAL
 
 func _process(_delta: float) -> void:
-	if selected_polygon2d == null:
+	if not _dock_control.button_pressed or selected_polygon2d == null or not selected_polygon2d.get_meta("auto_triangulate", false):
 		return
+	#if selected_polygon2d == null or not selected_polygon2d.get_meta("auto_triangulate", false):
+		#return
 	if selected_polygon2d.polygon != previous_points:
 		triangulate_polygons(selected_polygon2d)
-		# queue the editor for redraw
 		_queue_redraw_panels(_polygon_2d_editor_panels)
-		
 		previous_points = selected_polygon2d.polygon.duplicate()
-
 
 func _handles(object: Object) -> bool:
 	if object is Polygon2D:
 		selected_polygon2d = object
+		previous_points = selected_polygon2d.polygon.duplicate()
+		_update_button_ui()
 		return true
 	selected_polygon2d = null
+	_toolbar_button.hide()
 	return false
-
-
+	
 func triangulate_polygons(polygon2d : Polygon2D) -> void:
 	if polygon2d.polygon.size() < 3:
 		# Can't triangulate without a triangle...
